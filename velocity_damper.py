@@ -1,12 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import random
+import ipywidgets as widgets
+from ipywidgets import interact
 
 class VelocityDamper:
     def __init__(self, ds, di, e_initial, t_max, dt, acc, velocity_noise_std, velocity_noise_mean, e_dot_min):
         self.lambda_ = 0.0               # Our method gain
         self.xi = 0.0                    # SoA method gain
         self.M = 1.0                     # Constant of amortization margin
-        self.ds = ds                    # Security distance
+        self.ds = ds                    # Safety distance
         self.di = di                    # Influence distance
         self.e_initial = e_initial             # Initial distance
         self.t_max = t_max                 # Maximum time
@@ -18,7 +21,7 @@ class VelocityDamper:
         np.random.seed(42)
         self.noise = np.random.normal(self.velocity_noise_mean, self.velocity_noise_std, int(self.t_max/self.dt))
 
-    def simulation(self, soa_method=False):
+    def simulation(self, soa_method=False, noise=False):
         # Initialize arrays
         time = np.arange(0, self.t_max, self.dt)
         e = np.zeros_like(time)
@@ -58,10 +61,14 @@ class VelocityDamper:
             # Update e using Euler Integration
             e[t] = e[t-1] + e_dot[t-1] * self.dt
             e_dot_state[t] = e_dot_state[t-1] + e_ddot[t-1] * self.dt
-            e_dot[t] = e_dot_state[t] + self.noise[t]
+            e_dot[t] = e_dot_state[t]
+            if noise:
+                e_dot[t] += self.noise[t]
             e_dot_constraint[t] = -self.xi * (e[t-1] - self.ds) / (self.di - self.ds)
             e_raw[t] = e_raw[t-1] + e_dot_raw[t-1] * self.dt
-            e_dot_raw[t] = e_dot_raw[t-1] + self.acc * self.dt  # + self.noise[t]
+            e_dot_raw[t] = e_dot_raw[t-1] + self.acc * self.dt
+            if noise:
+                e_dot_raw[t] += self.noise[t]
         self.lambda_ = lambda_save
         return time, e, e_dot, e_dot_state, e_ddot, e_dot_constraint, e_ddot_constraint_p, e_ddot_constraint_v, e_ddot_constraint, e_raw, 
             
@@ -82,7 +89,7 @@ class VelocityDamper:
         # Plot distance e(t)
         plt.subplot(3, 2, 1)
         plt.plot(time_new, e_new, label='Distance e(t)')
-        plt.axhline(y=self.ds, color='r', linestyle='--', label='Security distance ds')
+        plt.axhline(y=self.ds, color='r', linestyle='--', label='Safety distance ds')
         plt.axhline(y=self.di, color='g', linestyle='--', label='Influence distance di')
         plt.title('Distance Over Time (New Implementation)')
         plt.xlabel('Time [s]')
@@ -118,7 +125,7 @@ class VelocityDamper:
         # Plot distance soa implementation e_soa(t)
         plt.subplot(3, 2, 2)
         plt.plot(time_soa, e_soa, label='Distance SoA Implementation e(t)')
-        plt.axhline(y=self.ds, color='r', linestyle='--', label='Security distance ds')
+        plt.axhline(y=self.ds, color='r', linestyle='--', label='Safety distance ds')
         plt.axhline(y=self.di, color='g', linestyle='--', label='Influence distance di')
         plt.title('Distance Over Time (SoA Implementation)')
         plt.xlabel('Time [s]')
@@ -153,72 +160,209 @@ class VelocityDamper:
         # Show the figure
         plt.show()
         
-    def plot_logspace_dt(self, lambda_min: float, nb_lambda: int):
-        lambdas = np.logspace(np.log10(lambda_min), np.log10(1/self.dt), nb_lambda) # Generate points between 1 and 1/dt on a logarithmic scale
+    def plot_multi_lambdas_m(self):
+        nb_points = 10
+        lambdas = np.logspace(np.log10(1.0), np.log10(1/self.dt), nb_points) # Generate points between 1 and 1/dt on a logarithmic scale
+        m = np.linspace(1.0, 10.0, nb_points)
+        
         print(f"lambdas: {lambdas}")
+        print(f"m: {m}")
+        
+        # curves with different Lambda
         self.M = 1.1
-        e_new_table = []
-        e_dot_new_table = []
-        e_ddot_new_table = []
+        e_new_table_multi_l = []
+        e_noised_new_table_multi_l = []
+        e_dot_new_table_multi_l = []
+        e_dot_noised_new_table_multi_l = []
+        e_ddot_new_table_multi_l = []
+        e_ddot_noised_new_table_multi_l = []
         for lambda_ in lambdas:
             self.lambda_ = lambda_
-            
-            # self.xi = self.lambda_*(self.di-self.ds)/(4*self.M**2)
             time_new, e_new, e_dot_new, e_dot_real_new, e_ddot_new, e_dot_constraint_new, e_ddot_constraint_p_new, e_ddot_constraint_v_new, e_ddot_constraint_new, e_raw = self.simulation()
-            e_new_table.append(e_new), e_dot_new_table.append(e_dot_new), e_ddot_new_table.append(e_ddot_new)
-        
+            e_new_table_multi_l.append(e_new), e_dot_new_table_multi_l.append(e_dot_real_new), e_ddot_new_table_multi_l.append(e_ddot_new)
+            time_new, e_new, e_dot_new, e_dot_real_new, e_ddot_new, e_dot_constraint_new, e_ddot_constraint_p_new, e_ddot_constraint_v_new, e_ddot_constraint_new, e_raw = self.simulation(noise=True)
+            e_noised_new_table_multi_l.append(e_new), e_dot_noised_new_table_multi_l.append(e_dot_real_new), e_ddot_noised_new_table_multi_l.append(e_ddot_new)
+            
+        # curves with different M
+        self.lambda_ = 100.0
+        e_new_table_multi_m = []
+        e_noised_new_table_multi_m = []
+        e_dot_new_table_multi_m = []
+        e_dot_noised_new_table_multi_m = []
+        e_ddot_new_table_multi_m = []
+        e_ddot_noised_new_table_multi_m = []
+        for m_ in m:
+            self.M = m_
+            time_new, e_new, e_dot_new, e_dot_real_new, e_ddot_new, e_dot_constraint_new, e_ddot_constraint_p_new, e_ddot_constraint_v_new, e_ddot_constraint_new, e_raw = self.simulation()
+            e_new_table_multi_m.append(e_new), e_dot_new_table_multi_m.append(e_dot_new), e_dot_noised_new_table_multi_m.append(e_dot_real_new), e_ddot_new_table_multi_m.append(e_ddot_new)
+            time_new, e_new, e_dot_new, e_dot_real_new, e_ddot_new, e_dot_constraint_new, e_ddot_constraint_p_new, e_ddot_constraint_v_new, e_ddot_constraint_new, e_raw = self.simulation(noise=True)
+            e_noised_new_table_multi_m.append(e_new), e_dot_noised_new_table_multi_m.append(e_dot_real_new), e_ddot_noised_new_table_multi_m.append(e_ddot_new)
+            
+        # Plot the results
         plt.figure(figsize=(12, 8))
         
-        plt.suptitle(f"Second Order Velocity Damper comparison between new and SoA implementation with λ and ξ from {lambda_min} to 1/dt:{1/self.dt}, and M = {self.M}")
+        # plt.suptitle(f"Second Order Velocity Damper comparison between new and SoA implementation with λ and ξ from {1} to 1/dt:{1/self.dt}, and M = {self.M}")
         
         # Plot distance e(t)
-        plt.subplot(3, 1, 1)
-        for e_new in e_new_table:
+        plt.subplot(3, 2, 1)
+        for e_new in e_noised_new_table_multi_l:
+            plt.plot(time_new, e_new, alpha=0.3)
+        for e_new in e_new_table_multi_l:
             plt.plot(time_new, e_new)
-        plt.plot(time_new, e_raw, color='black', linestyle='--', label='Distance e(t) without VelocityDamper')
-        plt.axhline(y=self.ds, color='r', linestyle='--', label='Security distance ds')
+        # plt.plot(time_new, e_raw, color='black', linestyle='--', label='Distance e(t) without VelocityDamper')
+        plt.axhline(y=self.ds, color='r', linestyle='--', label='Safety distance ds')
         plt.axhline(y=self.di, color='g', linestyle='--', label='Influence distance di')
-        plt.title('Distance Over Time (New Implementation)')
+        plt.title('Distance Over Time (Closed-loop Implementation)')
         plt.xlabel('Time [s]')
         plt.ylabel('Distance e(t)')
         plt.ylim(self.ds-1,self.e_initial+1)
         plt.legend()
         
+        # Plot velocity e_dot(t)
+        plt.subplot(3, 2, 3)
+        for e_dot_real_new in e_dot_noised_new_table_multi_l:
+            plt.plot(time_new[1:], e_dot_real_new[1:], alpha=0.3)
+        for e_dot_new in e_dot_new_table_multi_l:
+            plt.plot(time_new[1:], e_dot_new[1:])
+        plt.title('Velocity Over Time (Closed-loop Implementation)')
+        plt.xlabel('Time [s]')
+        plt.ylabel('Velocity $\dot{e}(t)$')
+        plt.legend()
+        
         # Plot acceleration e_ddot(t)
-        plt.subplot(3, 1, 2)
-        for e_ddot_new in e_ddot_new_table:
-            plt.plot(time_new[:-1], e_ddot_new[:-1])
-        plt.title('Acceleration Over Time (New Implementation)')
+        plt.subplot(3, 2, 5)
+        i = 0
+        for e_ddot_new in e_ddot_noised_new_table_multi_l:
+            plt.plot(time_new[:-1], e_ddot_new[:-1], alpha=0.3)
+        for e_ddot_new in e_ddot_new_table_multi_l:
+            percent_value = lambdas[i]*self.dt*100
+            plt.plot(time_new[:-1], e_ddot_new[:-1], label=f"λ = {percent_value:.1f}% of 1/dt")
+            i+=1
+        plt.title('Acceleration Over Time (Closed-loop Implementation)')
         plt.xlabel('Time [s]')
         plt.ylabel('Acceleration $\ddot{e}(t)$')
         # plt.ylim(-2,5)
         plt.legend()
         
+        # Plot distance e(t)
+        plt.subplot(3, 2, 2)
+        for e_new in e_noised_new_table_multi_m:
+            plt.plot(time_new, e_new, alpha=0.3)
+        for e_new in e_new_table_multi_m:
+            plt.plot(time_new, e_new)
+        # plt.plot(time_new, e_raw, color='black', linestyle='--', label='Distance e(t) without VelocityDamper')
+        plt.axhline(y=self.ds, color='r', linestyle='--', label='Safety distance ds')
+        plt.axhline(y=self.di, color='g', linestyle='--', label='Influence distance di')
+        plt.title('Distance Over Time (Closed-loop Implementation)')
+        plt.xlabel('Time [s]')
+        plt.ylabel('Distance e(t)')
+        plt.ylim(self.ds-1,self.e_initial+1)
+        plt.legend()
+        
         # Plot velocity e_dot(t)
-        plt.subplot(3, 1, 3)
-        i = 0
-        for e_dot_new in e_dot_new_table:
-            percent_value = lambdas[i]*self.dt*100
-            plt.plot(time_new[1:], e_dot_new[1:], label=f"λ = {percent_value:.1f}% of 1/dt")
-            i+=1
-        plt.title('Velocity Over Time (New Implementation)')
+        plt.subplot(3, 2, 4)
+        for e_dot_real_new in e_dot_noised_new_table_multi_m:
+            plt.plot(time_new[1:], e_dot_real_new[1:], alpha=0.3)
+        for e_dot_new in e_dot_new_table_multi_m:
+            plt.plot(time_new[1:], e_dot_new[1:])
+        plt.title('Velocity Over Time (Closed-loop Implementation)')
         plt.xlabel('Time [s]')
         plt.ylabel('Velocity $\dot{e}(t)$')
         plt.legend()
         
+        # Plot acceleration e_ddot(t)
+        plt.subplot(3, 2, 6)
+        i = 0
+        for e_ddot_new in e_ddot_noised_new_table_multi_m:
+            plt.plot(time_new[:-1], e_ddot_new[:-1], alpha=0.3)
+        for e_ddot_new in e_ddot_new_table_multi_m:
+            plt.plot(time_new[:-1], e_ddot_new[:-1], label=f"M = {m[i]:.1f}")
+            i+=1
+        plt.title('Acceleration Over Time (Closed-loop Implementation)')
+        plt.xlabel('Time [s]')
+        plt.ylabel('Acceleration $\ddot{e}(t)$')
+        # plt.ylim(-2,5)
+        plt.legend()
+        
+        # Add title to the first column
+        plt.suptitle(f"Closed-loop Velocity Damper with λ variations from 1 to 1/dt:{1/self.dt} and M=1.1 (left), and M variations from 1 to 10 and λ=100 (right)")
         
         # Adjust layout to prevent overlap
-        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.tight_layout()#rect=[0, 0, 1, 0.95])
         
         # Show the figure
         plt.show()
+        
+    def plot_combination_lambda_m(self):
+        nb_points = 20
+        lambdas = np.logspace(np.log10(1.0), np.log10(1/self.dt), nb_points)
+        m = np.linspace(1.0, 10.0, nb_points)
+        combinations = []
+        for lambda_ in lambdas:
+            self.lambda_ = lambda_
+            e_new_table = []
+            e_dot_new_table = []
+            e_ddot_new_table = []
+            for m_ in m:
+                self.M = m_
+                time_new, e_new, e_dot_new, e_dot_real_new, e_ddot_new, e_dot_constraint_new, e_ddot_constraint_p_new, e_ddot_constraint_v_new, e_ddot_constraint_new, e_raw = self.simulation()
+                e_new_table.append(e_new), e_dot_new_table.append(e_dot_new), e_ddot_new_table.append(e_ddot_new)
+            combinations.append({'e':e_new_table, 'e_dot':e_dot_new_table, 'e_ddot':e_ddot_new_table})
+            
+        # Plot the results
+        plt.figure(figsize=(12, 8))
+        
+        # Plot distance e(t)
+        plt.subplot(3, 1, 1)
+        for combination in combinations:
+            color = (random.random(), random.random(), random.random())
+            for e_new in combination['e']:
+                plt.plot(time_new, e_new, color=color)
+        plt.plot(time_new, e_raw, color='black', linestyle='--', label='Distance e(t) without VelocityDamper')
+        plt.axhline(y=self.ds, color='r', linestyle='--', label='Safety distance ds')
+        plt.axhline(y=self.di, color='g', linestyle='--', label='Influence distance di')
+        plt.title('Distance Over Time (Closed-loop Implementation)')
+        plt.xlabel('Time [s]')
+        plt.ylabel('Distance e(t)')
+        plt.ylim(self.ds-1,self.e_initial+1)
+        plt.legend()
+        
+        # Plot velocity e_dot(t)
+        plt.subplot(3, 1, 2)
+        for combination in combinations:
+            color = (random.random(), random.random(), random.random())
+            for e_dot_new in combination['e_dot']:
+                plt.plot(time_new[1:], e_dot_new[1:], color=color)
+        plt.title('Velocity Over Time (Closed-loop Implementation)')
+        plt.xlabel('Time [s]')
+        plt.ylabel('Velocity $\dot{e}(t)$')
+        plt.legend()
+        
+        # Plot acceleration e_ddot(t)
+        plt.subplot(3, 1, 3)
+        for combination in combinations:
+            color = (random.random(), random.random(), random.random())
+            for e_ddot_new in combination['e_ddot']:
+                plt.plot(time_new[:-1], e_ddot_new[:-1], color=color)
+        plt.title('Acceleration Over Time (Closed-loop Implementation)')
+        plt.xlabel('Time [s]')
+        plt.ylabel('Acceleration $\ddot{e}(t)$')
+        plt.legend()
+        
+        # Adjust layout to prevent overlap
+        plt.tight_layout()
+        
+        # Show the figure
+        plt.show()
+            
         
         
         
  
 def main():
     velocity_damper = VelocityDamper(ds=1.0, di=10.0, e_initial=20.0, t_max=20.0, dt=0.001, acc=-0.5, velocity_noise_std=0.02, velocity_noise_mean=0.0, e_dot_min=-3.0)
-    velocity_damper.plot_logspace_dt(lambda_min=1.0, nb_lambda=10)
+    velocity_damper.plot_multi_lambdas_m()
     #velocity_damper.plot_comparison_simulation(lambda_=1.0, M=1.1)
+    #velocity_damper.plot_combination_lambda_m()
 if __name__ == "__main__":
     main()
